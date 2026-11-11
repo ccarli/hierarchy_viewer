@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hierarchy explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF9F5;
+    --panel: #FFFFFF;
+    --text: #141413;
+    --text-2: #5E5D59;
+    --text-3: #8F8E89;
+    --line: #E3E1D7;
+    --line-strong: #BDBBB0;
+    --ink: #141413;
+    --hover: rgba(20, 20, 19, 0.04);
+    --drop: #2E7D4F;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --serif: "Source Serif 4", ui-serif, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1F1E1D;
+      --panel: #262624;
+      --text: #F5F4EE;
+      --text-2: #B7B5A9;
+      --text-3: #85837B;
+      --line: #3A3935;
+      --line-strong: #5A5853;
+      --ink: #F5F4EE;
+      --hover: rgba(245, 244, 238, 0.05);
+      --drop: #5DBB83;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column;
+  }
+  button, input { font: inherit; color: inherit; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+  }
+  h1 { font: 500 20px/1.2 var(--serif); margin: 0; letter-spacing: -0.01em; }
+  .tabs { display: flex; border: 1px solid var(--line-strong); }
+  .tabs button {
+    background: none; border: 0; padding: 6px 14px; cursor: pointer; color: var(--text-2);
+  }
+  .tabs button + button { border-left: 1px solid var(--line-strong); }
+  .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .search {
+    display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong);
+    padding: 0 10px; height: 32px; background: var(--panel); min-width: 200px;
+  }
+  .search input { border: 0; outline: 0; background: none; flex: 1; height: 100%; }
+  .search svg { flex: none; color: var(--text-3); }
+  .legend { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); margin-left: auto; }
+  .legend .bar { width: 120px; height: 10px; border: 1px solid var(--line); }
+
+  /* Main */
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; overflow: hidden; min-height: 420px; }
+  aside {
+    width: 300px; flex: none; border-left: 1px solid var(--line); background: var(--panel);
+    padding: 20px; overflow-y: auto;
+  }
+  @media (max-width: 760px) {
+    main { flex-direction: column; }
+    #stage { min-height: 60vh; }
+    aside { width: auto; border-left: 0; border-top: 1px solid var(--line); }
+    .legend { margin-left: 0; }
+  }
+
+  /* Org chart */
+  .viewport { position: absolute; inset: 0; cursor: grab; touch-action: none; }
+  .viewport.panning { cursor: grabbing; }
+  .world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .world.animate { transition: transform 380ms cubic-bezier(.2, .8, .2, 1); }
+  .edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  .edges path { fill: none; stroke: var(--line-strong); stroke-width: 1; }
+  .edges path.dim { opacity: .25; }
+
+  .card {
+    position: absolute; width: 176px; height: 72px;
+    border: 1px solid rgba(0,0,0,.14); border-radius: 0;
+    padding: 9px 11px; cursor: pointer; user-select: none; touch-action: none;
+    display: flex; flex-direction: column; justify-content: space-between;
+    transition: opacity 200ms, box-shadow 120ms;
+  }
+  @media (prefers-color-scheme: dark) { .card { border-color: rgba(255,255,255,.12); } }
+  .card:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+  .card.sel { box-shadow: 0 0 0 2px var(--ink); }
+  .card.dim { opacity: .3; }
+  .card.match { box-shadow: 0 0 0 2px var(--drop); }
+  .card.drop { box-shadow: 0 0 0 2px var(--drop), 0 0 0 5px var(--bg), 0 0 0 6px var(--drop); }
+  .card.dragging { z-index: 10; opacity: .92; cursor: grabbing; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+  .card .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .card .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .score { font: 500 12px/1 var(--mono); padding: 3px 5px; border: 1px solid currentColor; opacity: .75; }
+  .card .owner { display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: .78; }
+  .initials {
+    width: 18px; height: 18px; flex: none; display: inline-grid; place-items: center;
+    font-size: 9px; font-weight: 500; border: 1px solid currentColor;
+  }
+  .toggle {
+    position: absolute; left: 50%; bottom: -10px; transform: translateX(-50%);
+    height: 19px; min-width: 26px; padding: 0 6px; border-radius: 0;
+    background: var(--panel); color: var(--text-2); border: 1px solid var(--line-strong);
+    font: 500 11px/17px var(--mono); cursor: pointer;
+  }
+  .toggle:hover { color: var(--text); border-color: var(--ink); }
+
+  .zoombar { position: absolute; right: 16px; bottom: 16px; display: flex; flex-direction: column; border: 1px solid var(--line-strong); background: var(--panel); z-index: 5; }
+  .zoombar button { width: 34px; height: 34px; border: 0; background: none; cursor: pointer; color: var(--text-2); display: grid; place-items: center; }
+  .zoombar button + button { border-top: 1px solid var(--line); }
+  .zoombar button:hover { background: var(--hover); color: var(--text); }
+  .hint { position: absolute; left: 16px; bottom: 16px; font-size: 12px; color: var(--text-3); z-index: 5; pointer-events: none; max-width: 60%; }
+
+  /* Outline */
+  .outline { position: absolute; inset: 0; overflow-y: auto; padding: 16px 20px 60px; }
+  .row {
+    display: flex; align-items: center; gap: 10px; height: 40px; padding-right: 10px;
+    border-bottom: 1px solid var(--line); user-select: none; cursor: pointer;
+  }
+  .row:hover { background: var(--hover); }
+  .row.sel { background: var(--hover); box-shadow: inset 2px 0 0 var(--ink); }
+  .row.before { box-shadow: inset 0 2px 0 var(--drop); }
+  .row.after { box-shadow: inset 0 -2px 0 var(--drop); }
+  .row.into { background: color-mix(in srgb, var(--drop) 14%, transparent); }
+  .row.ghost { opacity: .35; }
+  .grip { cursor: grab; color: var(--text-3); touch-action: none; display: grid; place-items: center; width: 18px; height: 28px; }
+  .chev { width: 18px; height: 18px; display: grid; place-items: center; color: var(--text-2); border: 0; background: none; padding: 0; cursor: pointer; }
+  .swatch { width: 12px; height: 12px; flex: none; border: 1px solid rgba(0,0,0,.15); }
+  .row .rname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .rowner { color: var(--text-2); font-size: 13px; }
+  .row .rscore { font: 500 12px var(--mono); color: var(--text-2); width: 28px; text-align: right; }
+
+  /* Treemap */
+  .treemap { position: absolute; inset: 0; padding: 16px 20px; display: flex; flex-direction: column; }
+  .crumbs { font-size: 13px; color: var(--text-2); margin-bottom: 12px; }
+  .crumbs button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
+  .crumbs .cur { color: var(--text); font-weight: 500; }
+  .tm-box { position: relative; flex: 1; min-height: 300px; }
+  .tm { position: absolute; overflow: hidden; border: 1px solid rgba(0,0,0,.14); padding: 8px 10px; cursor: pointer; }
+  .tm:hover { box-shadow: inset 0 0 0 1px var(--ink); }
+  .tm.sel { box-shadow: inset 0 0 0 2px var(--ink); }
+  .tm .tname { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tm .tmeta { font-size: 12px; opacity: .78; }
+  .tm .tm { padding: 4px 6px; font-size: 12px; }
+
+  /* Detail panel */
+  .eyebrow { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin: 0 0 6px; }
+  .d-name { font: 500 24px/1.2 var(--serif); margin: 0 0 14px; letter-spacing: -0.01em; }
+  .d-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .d-row .k { width: 64px; color: var(--text-3); font-size: 12px; flex: none; }
+  .d-row a { color: var(--text); text-underline-offset: 3px; word-break: break-all; }
+  .meter { flex: 1; height: 8px; border: 1px solid var(--line); position: relative; }
+  .meter i { position: absolute; inset: 0 auto 0 0; }
+  .kids { list-style: none; margin: 8px 0 0; padding: 0; }
+  .kids button {
+    width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; background: none;
+    border: 0; border-top: 1px solid var(--line); padding: 8px 0; cursor: pointer;
+  }
+  .kids button:hover .kn { text-decoration: underline; text-underline-offset: 3px; }
+  .kids .kn { flex: 1; }
+  .kids .ks { font: 12px var(--mono); color: var(--text-2); }
+  .btn { margin-top: 16px; border: 1px solid var(--line-strong); background: none; padding: 7px 12px; cursor: pointer; }
+  .btn:hover { border-color: var(--ink); }
+  .empty { color: var(--text-2); }
+  .crumbline { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<!--
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║   RAW DATA (JSON)  —  edit this block to load your own hierarchy      ║
+║                                                                      ║
+║   Each node:                                                         ║
+║     id        unique string                                          ║
+║     name      card title                                             ║
+║     owner     person responsible                                     ║
+║     link      URL opened from the detail panel                       ║
+║     score     usage score 0–100 (leaves). Optional on parents:       ║
+║               if omitted, a parent's score is the average of the     ║
+║               leaf scores beneath it.                                ║
+║     children  array of nodes (optional)                              ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+-->
+<script type="application/json" id="tree-data">
+{
+  "id": "platform",
+  "name": "Platform",
+  "owner": "Ana Martin",
+  "link": "https://example.com/platform",
+  "children": [
+    {
+      "id": "data",
+      "name": "Data",
+      "owner": "Ben Kowalski",
+      "link": "https://example.com/data",
+      "children": [
+        { "id": "ingest",    "name": "Ingest pipeline", "owner": "Léa Petit",    "link": "https://example.com/data/ingest",    "score": 88 },
+        { "id": "warehouse", "name": "Warehouse",       "owner": "Omar Said",    "link": "https://example.com/data/warehouse", "score": 95 },
+        { "id": "dash",      "name": "Dashboards",      "owner": "Ivy Tran",     "link": "https://example.com/data/dashboards","score": 61 },
+        { "id": "catalog",   "name": "Data catalog",    "owner": "Raj Mehta",    "link": "https://example.com/data/catalog",   "score": 12 }
+      ]
+    },
+    {
+      "id": "web",
+      "name": "Web",
+      "owner": "Chloé Roux",
+      "link": "https://example.com/web",
+      "children": [
+        { "id": "site",     "name": "Marketing site", "owner": "Noah Lee",    "link": "https://example.com/web/site",     "score": 72 },
+        { "id": "checkout", "name": "Checkout",       "owner": "Mia Dubois",  "link": "https://example.com/web/checkout", "score": 97 },
+        {
+          "id": "design-system",
+          "name": "Design system",
+          "owner": "Elena Ruiz",
+          "link": "https://example.com/web/design-system",
+          "children": [
+            { "id": "tokens", "name": "Tokens",        "owner": "Paul Girard", "link": "https://example.com/ds/tokens", "score": 54 },
+            { "id": "icons",  "name": "Icon library",  "owner": "Yuki Sato",   "link": "https://example.com/ds/icons",  "score": 28 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mobile",
+      "name": "Mobile",
+      "owner": "Dev Patel",
+      "link": "https://example.com/mobile",
+      "children": [
+        { "id": "ios",     "name": "iOS app",       "owner": "Sam Wright", "link": "https://example.com/mobile/ios",     "score": 83 },
+        { "id": "android", "name": "Android app",   "owner": "Zoe Hart",   "link": "https://example.com/mobile/android", "score": 76 },
+        { "id": "watch",   "name": "Watch app",     "owner": "Tom Becker", "link": "https://example.com/mobile/watch",   "score": 5 }
+      ]
+    },
+    {
+      "id": "infra",
+      "name": "Infrastructure",
+      "owner": "Grace Okafor",
+      "link": "https://example.com/infra",
+      "children": [
+        { "id": "ci",     "name": "CI runners",    "owner": "Max Weber",  "link": "https://example.com/infra/ci",     "score": 91 },
+        { "id": "obs",    "name": "Observability", "owner": "Nina Rossi", "link": "https://example.com/infra/obs",    "score": 47 },
+        { "id": "legacy", "name": "Legacy VMs",    "owner": "Hugo Blanc", "link": "https://example.com/infra/legacy", "score": 2 }
+      ]
+    }
+  ]
+}
+</script>
+<!-- ════════════════════════ END OF RAW DATA ════════════════════════ -->
+
+<header>
+  <h1>Hierarchy explorer</h1>
+  <div class="tabs" role="group" aria-label="View">
+    <button data-view="org" aria-pressed="true">Org chart</button>
+    <button data-view="outline" aria-pressed="false">Outline</button>
+    <button data-view="treemap" aria-pressed="false">Treemap</button>
+  </div>
+  <label class="search">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search name or owner" aria-label="Search cards">
+  </label>
+  <div class="legend" aria-label="Usage score scale">
+    <span>Low usage</span><span class="bar" id="legendBar"></span><span>High</span>
+  </div>
+</header>
+
+<main>
+  <section id="stage" aria-label="Visualisation"></section>
+  <aside id="detail" aria-live="polite"></aside>
+</main>
+
+<script>
+/* ─────────────────────────────── Data ─────────────────────────────── */
+const ROOT = JSON.parse(document.getElementById('tree-data').textContent);
+(function prep(n) { n.children = n.children || []; n.children.forEach(prep); })(ROOT);
+
+const walk = (n, fn, parent = null, depth = 0) => { fn(n, parent, depth); n.children.forEach(c => walk(c, fn, n, depth + 1)); };
+const byId = id => { let r = null; walk(ROOT, n => { if (n.id === id) r = n; }); return r; };
+const parentOf = x => { let r = null; walk(ROOT, (n, p) => { if (n === x) r = p; }); return r; };
+const contains = (a, b) => { let r = false; walk(a, n => { if (n === b) r = true; }); return r; };
+const ancestors = n => { const out = []; let p = parentOf(n); while (p) { out.unshift(p); p = parentOf(p); } return out; };
+const leaves = n => n.children.length ? n.children.flatMap(leaves) : [n];
+const scoreOf = n => {
+  if (!n.children.length || typeof n.score === 'number') return Math.round(n.score ?? 0);
+  const ls = leaves(n); return Math.round(ls.reduce((s, l) => s + (l.score ?? 0), 0) / ls.length);
+};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const initials = s => s.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+/* ─────────────────────── Colour: grey → green ─────────────────────── */
+const dark = matchMedia('(prefers-color-scheme: dark)');
+const STOPS = {
+  light: [[0, '#EFEEE9'], [35, '#E2E3D8'], [65, '#A9D2A6'], [85, '#5FAE72'], [100, '#2E7D4F']],
+  dark:  [[0, '#33322E'], [35, '#3B3F37'], [65, '#3E6B49'], [85, '#3E8D5A'], [100, '#4FAE6F']]
+};
+const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+function scoreColor(s) {
+  const st = STOPS[dark.matches ? 'dark' : 'light'];
+  let i = 0; while (i < st.length - 2 && s > st[i + 1][0]) i++;
+  const [s0, c0] = st[i], [s1, c1] = st[i + 1], t = Math.min(1, Math.max(0, (s - s0) / (s1 - s0)));
+  const a = hex(c0), b = hex(c1), rgb = a.map((v, k) => Math.round(v + (b[k] - v) * t));
+  const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  return { bg: `rgb(${rgb})`, fg: dark.matches ? (lum > 0.55 ? '#141413' : '#F5F4EE') : (lum < 0.5 ? '#FFFFFF' : '#141413') };
+}
+function paintLegend() {
+  const st = STOPS[dark.matches ? 'dark' : 'light'];
+  document.getElementById('legendBar').style.background = `linear-gradient(90deg, ${st.map(([p, c]) => `${c} ${p}%`).join(',')})`;
+}
+
+/* ─────────────────────────────── State ────────────────────────────── */
+const state = { view: 'org', sel: null, collapsed: new Set(), zoomNode: ROOT, query: '', tf: null };
+const stage = document.getElementById('stage');
+const detail = document.getElementById('detail');
+
+function select(n, { focus = false } = {}) {
+  state.sel = n ? n.id : null;
+  if (n) ancestors(n).forEach(a => state.collapsed.delete(a.id));
+  renderDetail(); render();
+  if (n && focus && state.view === 'org') centerOn(n);
+}
+
+/* ───────────────────────────── Detail panel ───────────────────────── */
+function renderDetail() {
+  const n = state.sel && byId(state.sel);
+  if (!n) {
+    detail.innerHTML = `<p class="eyebrow">Details</p><p class="empty">Select a card to see its owner, link and usage. Drag cards to restructure the tree.</p>
+      <p class="eyebrow" style="margin-top:24px">Totals</p>
+      <div class="d-row"><span class="k">Cards</span><span>${(() => { let c = 0; walk(ROOT, () => c++); return c; })()}</span></div>
+      <div class="d-row"><span class="k">Avg usage</span><span>${scoreOf(ROOT)}</span></div>`;
+    return;
+  }
+  const s = scoreOf(n), col = scoreColor(s), path = ancestors(n);
+  detail.innerHTML = `
+    ${path.length ? `<div class="crumbline">${path.map(p => esc(p.name)).join(' / ')}</div>` : ''}
+    <h2 class="d-name">${esc(n.name)}</h2>
+    <div class="d-row"><span class="k">Owner</span><span class="initials" style="color:var(--text-2)">${esc(initials(n.owner))}</span><span>${esc(n.owner)}</span></div>
+    <div class="d-row"><span class="k">Link</span><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.link.replace(/^https?:\/\//, ''))}</a></div>
+    <div class="d-row"><span class="k">Usage</span><span class="meter"><i style="width:${s}%;background:${col.bg}"></i></span><span style="font:500 12px var(--mono)">${s}</span></div>
+    ${n.children.length ? `<p class="eyebrow" style="margin-top:20px">Children · ${n.children.length}${typeof n.score !== 'number' ? ' · score is their average' : ''}</p>
+      <ul class="kids">${n.children.map(c => `<li><button data-id="${esc(c.id)}"><span class="swatch" style="background:${scoreColor(scoreOf(c)).bg}"></span><span class="kn">${esc(c.name)}</span><span class="ks">${scoreOf(c)}</span></button></li>`).join('')}</ul>` : ''}
+    ${state.view === 'org' ? '<button class="btn" id="focusBtn">Center in chart</button>' : ''}
+    <button class="btn" id="clearBtn" style="margin-left:6px">Clear selection</button>`;
+  detail.querySelectorAll('.kids button').forEach(b => b.onclick = () => select(byId(b.dataset.id), { focus: true }));
+  const f = document.getElementById('focusBtn'); if (f) f.onclick = () => centerOn(n);
+  document.getElementById('clearBtn').onclick = () => select(null);
+}
+
+/* ───────────────────────────── Move (DnD) ─────────────────────────── */
+function moveNode(n, target, mode) {
+  if (n === ROOT || !target || contains(n, target)) return false;
+  const p = parentOf(n); p.children.splice(p.children.indexOf(n), 1);
+  if (mode === 'into') { target.children.push(n); state.collapsed.delete(target.id); }
+  else { const tp = parentOf(target); const i = tp.children.indexOf(target); tp.children.splice(mode === 'after' ? i + 1 : i, 0, n); }
+  renderDetail();
+  return true;
+}
+
+function dragGesture(el, { onStart, onMove, onDrop, onTap }) {
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    el.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, y0 = e.clientY; let dragging = false;
+    const move = ev => {
+      if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) > 5) { dragging = true; onStart && onStart(); }
+      if (dragging) onMove(ev, ev.clientX - x0, ev.clientY - y0);
+    };
+    const up = ev => {
+      el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
+      dragging ? onDrop(ev) : onTap && onTap(ev);
+    };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  });
+}
+
+/* ───────────────────────────── Org chart ──────────────────────────── */
+const W = 176, H = 72, GX = 22, GY = 64;
+let worldEl = null, viewportEl = null, lastBounds = null;
+
+function layout() {
+  const pos = new Map(); let col = 0;
+  (function rec(n, d) {
+    const kids = state.collapsed.has(n.id) ? [] : n.children;
+    kids.forEach(c => rec(c, d + 1));
+    const x = kids.length ? (pos.get(kids[0]).x + pos.get(kids[kids.length - 1]).x) / 2 : (col++) * (W + GX);
+    pos.set(n, { x, y: d * (H + GY), kids });
+  })(ROOT, 0);
+  let maxX = 0, maxY = 0; pos.forEach(p => { maxX = Math.max(maxX, p.x + W); maxY = Math.max(maxY, p.y + H); });
+  return { pos, w: maxX, h: maxY };
+}
+
+function applyTf(animate) {
+  if (!worldEl) return;
+  worldEl.classList.toggle('animate', !!animate);
+  const { x, y, k } = state.tf;
+  worldEl.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+}
+
+function fit(animate = true) {
+  if (!viewportEl || !lastBounds) return;
+  const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight, pad = 60;
+  const k = Math.min(1, (vw - pad) / lastBounds.w, (vh - pad) / (lastBounds.h + 20));
+  state.tf = { k, x: (vw - lastBounds.w * k) / 2, y: Math.max(24, (vh - lastBounds.h * k) / 2) };
+  applyTf(animate);
+}
+
+// Start readable: never smaller than 80%, root centred at the top
+function initialView() {
+  const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
+  const k = Math.max(0.8, Math.min(1, (vw - 60) / lastBounds.w, (vh - 60) / (lastBounds.h + 20)));
+  const rootX = layout().pos.get(ROOT).x + W / 2;
+  const x = lastBounds.w * k < vw ? (vw - lastBounds.w * k) / 2 : vw / 2 - rootX * k;
+  state.tf = { k, x, y: 40 };
+  applyTf(false);
+}
+
+function centerOn(n) {
+  const { pos } = layout(); const p = pos.get(n); if (!p || !viewportEl) return;
+  const k = Math.max(state.tf.k, 0.85);
+  state.tf = { k, x: viewportEl.clientWidth / 2 - (p.x + W / 2) * k, y: viewportEl.clientHeight / 3 - (p.y + H / 2) * k };
+  applyTf(true);
+}
+
+function zoomBy(f, cx, cy, animate) {
+  const { x, y, k } = state.tf, k2 = Math.min(2.5, Math.max(0.2, k * f));
+  if (cx == null) { cx = viewportEl.clientWidth / 2; cy = viewportEl.clientHeight / 2; }
+  state.tf = { k: k2, x: cx - (cx - x) * k2 / k, y: cy - (cy - y) * k2 / k };
+  applyTf(animate);
+}
+
+function renderOrg() {
+  const first = !viewportEl;
+  stage.innerHTML = '';
+  viewportEl = document.createElement('div'); viewportEl.className = 'viewport';
+  worldEl = document.createElement('div'); worldEl.className = 'world';
+  viewportEl.appendChild(worldEl); stage.appendChild(viewportEl);
+
+  const { pos, w, h } = layout(); lastBounds = { w, h };
+  const selNode = state.sel && byId(state.sel);
+  const related = new Set();
+  if (selNode) { ancestors(selNode).forEach(a => related.add(a)); walk(selNode, d => related.add(d)); }
+  const q = state.query.trim().toLowerCase();
+  const isMatch = n => q && (n.name.toLowerCase().includes(q) || n.owner.toLowerCase().includes(q));
+
+  // Edges: straight orthogonal elbows
+  let paths = '';
+  pos.forEach((p, n) => p.kids.forEach(c => {
+    const q2 = pos.get(c), x1 = p.x + W / 2, y1 = p.y + H, x2 = q2.x + W / 2, y2 = q2.y, my = y1 + GY / 2;
+    const dim = selNode && !(related.has(n) && related.has(c));
+    paths += `<path class="${dim ? 'dim' : ''}" d="M${x1} ${y1 + 10}V${my}H${x2}V${y2}"/>`;
+  }));
+  worldEl.insertAdjacentHTML('beforeend', `<svg class="edges" width="${w}" height="${h}">${paths}</svg>`);
+
+  pos.forEach((p, n) => {
+    const s = scoreOf(n), col = scoreColor(s);
+    const el = document.createElement('div');
+    el.className = 'card' + (state.sel === n.id ? ' sel' : '') + (selNode && !related.has(n) ? ' dim' : '') + (isMatch(n) ? ' match' : '');
+    el.dataset.id = n.id;
+    el.style.cssText = `left:${p.x}px;top:${p.y}px;background:${col.bg};color:${col.fg}`;
+    el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', `${n.name}, owner ${n.owner}, usage ${s}`);
+    el.innerHTML = `<div class="top"><span class="name">${esc(n.name)}</span><span class="score">${s}</span></div>
+      <div class="owner"><span class="initials">${esc(initials(n.owner))}</span><span>${esc(n.owner)}</span></div>`;
+    if (n.children.length) {
+      const t = document.createElement('button'); t.className = 'toggle';
+      const closed = state.collapsed.has(n.id);
+      t.textContent = closed ? `+${n.children.length}` : '−';
+      t.setAttribute('aria-label', closed ? `Expand ${n.name}` : `Collapse ${n.name}`);
+      t.addEventListener('pointerdown', e => e.stopPropagation());
+      t.onclick = e => { e.stopPropagation(); closed ? state.collapsed.delete(n.id) : state.collapsed.add(n.id); render(); };
+      el.appendChild(t);
+    }
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(n, { focus: true }); } });
+
+    let target = null;
+    dragGesture(el, {
+      onStart: () => el.classList.add('dragging'),
+      onMove: (e, dx, dy) => {
+        el.style.transform = `translate(${dx / state.tf.k}px, ${dy / state.tf.k}px)`;
+        worldEl.querySelectorAll('.drop').forEach(x => x.classList.remove('drop'));
+        const hit = document.elementsFromPoint(e.clientX, e.clientY).find(x => x.classList && x.classList.contains('card') && x !== el);
+        target = hit && !contains(n, byId(hit.dataset.id)) ? hit : null;
+        if (target) target.classList.add('drop');
+      },
+      onDrop: () => { if (target) moveNode(n, byId(target.dataset.id), 'into'); render(); },
+      onTap: () => select(state.sel === n.id ? null : n)
+    });
+    worldEl.appendChild(el);
+  });
+
+  // Pan & zoom
+  viewportEl.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const x0 = e.clientX, y0 = e.clientY, t0 = { ...state.tf }; let moved = false;
+    viewportEl.setPointerCapture(e.pointerId); viewportEl.classList.add('panning');
+    const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 3) moved = true; state.tf = { ...t0, x: t0.x + ev.clientX - x0, y: t0.y + ev.clientY - y0 }; applyTf(false); };
+    const up = () => { viewportEl.removeEventListener('pointermove', mv); viewportEl.removeEventListener('pointerup', up); viewportEl.classList.remove('panning'); if (!moved && state.sel) select(null); };
+    viewportEl.addEventListener('pointermove', mv); viewportEl.addEventListener('pointerup', up);
+  });
+  viewportEl.addEventListener('wheel', e => {
+    e.preventDefault(); const r = viewportEl.getBoundingClientRect();
+    zoomBy(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top, false);
+  }, { passive: false });
+
+  const zb = document.createElement('div'); zb.className = 'zoombar';
+  zb.innerHTML = `
+    <button aria-label="Zoom in" data-a="in"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button aria-label="Zoom out" data-a="out"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+    <button aria-label="Fit to screen" data-a="fit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>`;
+  zb.addEventListener('pointerdown', e => e.stopPropagation());
+  zb.onclick = e => { const a = e.target.closest('button')?.dataset.a; if (a === 'in') zoomBy(1.25, null, null, true); if (a === 'out') zoomBy(0.8, null, null, true); if (a === 'fit') fit(true); };
+  stage.appendChild(zb);
+  stage.insertAdjacentHTML('beforeend', `<div class="hint">Click a card to focus its branch · drag a card onto another to re-parent · scroll to zoom, drag the background to pan</div>`);
+
+  if (first || !state.tf) initialView(); else applyTf(false);
+}
+
+/* ───────────────────────────── Outline ────────────────────────────── */
+function renderOutline() {
+  viewportEl = worldEl = null;
+  stage.innerHTML = '<div class="outline" role="tree"></div>';
+  const box = stage.firstChild, rows = [];
+  (function flat(n, d) { rows.push([n, d]); if (!state.collapsed.has(n.id)) n.children.forEach(c => flat(c, d + 1)); })(ROOT, 0);
+
+  rows.forEach(([n, d]) => {
+    const s = scoreOf(n), r = document.createElement('div');
+    r.className = 'row' + (state.sel === n.id ? ' sel' : ''); r.dataset.id = n.id; r.setAttribute('role', 'treeitem');
+    r.style.paddingLeft = (d * 22) + 'px';
+    const closed = state.collapsed.has(n.id);
+    r.innerHTML = `
+      <span class="grip" aria-label="Drag to move"><svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></svg></span>
+      ${n.children.length ? `<button class="chev" aria-label="${closed ? 'Expand' : 'Collapse'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="transform:rotate(${closed ? 0 : 90}deg)"><path d="m9 6 6 6-6 6"/></svg></button>` : '<span style="width:18px"></span>'}
+      <span class="swatch" style="background:${scoreColor(s).bg}"></span>
+      <span class="rname">${esc(n.name)}</span>
+      <span class="rowner">${esc(n.owner)}</span>
+      <span class="rscore">${s}</span>`;
+    box.appendChild(r);
+    r.addEventListener('click', e => {
+      if (e.target.closest('.grip')) return;
+      if (e.target.closest('.chev')) { closed ? state.collapsed.delete(n.id) : state.collapsed.add(n.id); render(); return; }
+      select(state.sel === n.id ? null : n);
+    });
+    const grip = r.querySelector('.grip'); let tgt = null, mode = null;
+    dragGesture(grip, {
+      onStart: () => r.classList.add('ghost'),
+      onMove: e => {
+        box.querySelectorAll('.before,.after,.into').forEach(x => x.classList.remove('before', 'after', 'into'));
+        const hit = document.elementsFromPoint(e.clientX, e.clientY).map(x => x.closest && x.closest('.row')).find(x => x && x !== r);
+        tgt = null;
+        if (hit && !contains(n, byId(hit.dataset.id))) {
+          const b = hit.getBoundingClientRect(), f = (e.clientY - b.top) / b.height;
+          mode = hit.dataset.id === ROOT.id ? 'into' : f < .3 ? 'before' : f > .7 ? 'after' : 'into';
+          tgt = hit; hit.classList.add(mode);
+        }
+      },
+      onDrop: () => { if (tgt) moveNode(n, byId(tgt.dataset.id), mode); render(); }
+    });
+  });
+}
+
+/* ───────────────────────────── Treemap ────────────────────────────── */
+const weight = n => n.children.length ? n.children.reduce((s, c) => s + weight(c), 0) : 1;
+function split(items, x, y, w, h, out) {
+  if (!items.length) return;
+  if (items.length === 1) { out.push([items[0], x, y, w, h]); return; }
+  const tot = items.reduce((s, i) => s + weight(i), 0); let acc = 0, k = 0;
+  while (k < items.length - 1 && acc + weight(items[k]) <= tot / 2) { acc += weight(items[k]); k++; }
+  if (k === 0) { acc = weight(items[0]); k = 1; }
+  const f = acc / tot, a = items.slice(0, k), b = items.slice(k);
+  if (w >= h) { split(a, x, y, w * f, h, out); split(b, x + w * f, y, w * (1 - f), h, out); }
+  else { split(a, x, y, w, h * f, out); split(b, x, y + h * f, w, h * (1 - f), out); }
+}
+function renderTreemap() {
+  viewportEl = worldEl = null;
+  stage.innerHTML = '<div class="treemap"><div class="crumbs"></div><div class="tm-box"></div></div>';
+  const crumbs = stage.querySelector('.crumbs'), box = stage.querySelector('.tm-box');
+  const z = state.zoomNode, path = [...ancestors(z), z];
+  path.forEach((p, i) => {
+    if (i === path.length - 1) crumbs.insertAdjacentHTML('beforeend', `<span class="cur">${esc(p.name)}</span>`);
+    else { const b = document.createElement('button'); b.textContent = p.name; b.onclick = () => { state.zoomNode = p; render(); }; crumbs.appendChild(b); crumbs.append(' / '); }
+  });
+  const items = z.children.length ? z.children : [z];
+  const BW = box.clientWidth, BH = box.clientHeight, out = [];
+  split([...items].sort((a, b) => weight(b) - weight(a)), 0, 0, BW, BH, out);
+  out.forEach(([n, x, y, w, h]) => {
+    const s = scoreOf(n), col = scoreColor(s), el = document.createElement('div');
+    el.className = 'tm' + (state.sel === n.id ? ' sel' : '');
+    el.style.cssText = `left:${x + 2}px;top:${y + 2}px;width:${w - 4}px;height:${h - 4}px;background:${col.bg};color:${col.fg}`;
+    el.innerHTML = `<div class="tname">${esc(n.name)}</div><div class="tmeta">${esc(n.owner)} · ${s}</div>`;
+    el.onclick = e => { e.stopPropagation(); if (n.children.length) state.zoomNode = n; select(n); };
+    box.appendChild(el);
+    if (n.children.length && h > 110 && w > 120) {
+      const inner = []; split([...n.children].sort((a, b) => weight(b) - weight(a)), 0, 0, w - 16, h - 60, inner);
+      inner.forEach(([m, ix, iy, iw, ih]) => {
+        const c = scoreColor(scoreOf(m)), s2 = document.createElement('div');
+        s2.className = 'tm' + (state.sel === m.id ? ' sel' : '');
+        s2.style.cssText = `left:${ix + 7}px;top:${iy + 50}px;width:${iw - 4}px;height:${ih - 4}px;background:${c.bg};color:${c.fg}`;
+        s2.innerHTML = `<div class="tname">${esc(m.name)}</div>${ih > 44 ? `<div class="tmeta">${scoreOf(m)}</div>` : ''}`;
+        s2.onclick = e => { e.stopPropagation(); state.zoomNode = n; select(m); };
+        el.appendChild(s2);
+      });
+    }
+  });
+}
+
+/* ───────────────────────────── Wiring ─────────────────────────────── */
+function render() {
+  if (state.view === 'org') renderOrg();
+  else if (state.view === 'outline') renderOutline();
+  else renderTreemap();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  state.view = b.dataset.view; if (state.view !== 'org') viewportEl = null;
+  renderDetail(); render();
+});
+document.getElementById('q').addEventListener('input', e => {
+  state.query = e.target.value; const q = state.query.trim().toLowerCase();
+  if (!q) { render(); return; }
+  let hit = null; walk(ROOT, n => { if (!hit && (n.name.toLowerCase().includes(q) || n.owner.toLowerCase().includes(q))) hit = n; });
+  if (hit) { ancestors(hit).forEach(a => state.collapsed.delete(a.id)); if (state.view === 'treemap') state.zoomNode = parentOf(hit) || ROOT; select(hit, { focus: true }); }
+  else render();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.sel) select(null); });
+window.addEventListener('resize', () => { if (state.view === 'org') initialView(); else render(); });
+dark.addEventListener('change', () => { paintLegend(); renderDetail(); render(); });
+
+paintLegend(); renderDetail(); render();
+</script>
+</body>
+</html>
